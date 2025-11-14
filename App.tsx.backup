@@ -1,0 +1,399 @@
+
+
+
+
+import React, { useState, useEffect } from 'react';
+import LoginPage from './components/LoginPage';
+import DashboardPage from './components/DashboardPage';
+import ForcePasswordChangePage from './components/ForcePasswordChangePage';
+import { User, Task, TaskStatus, TaskPriority, RecurrenceFrequency, UserRole, Message, MessageRecipient, TaskComment, KnowledgeResource, ChecklistItem, UserStatus, Folder, Attachment } from './types';
+import { USERS, INITIAL_TASKS, INITIAL_MESSAGES } from './constants';
+import EmailCapturePage from './components/EmailCapturePage';
+import Confetti from './components/Confetti';
+
+const App: React.FC = () => {
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const savedUser = localStorage.getItem('currentUser');
+    if (savedUser) {
+        try {
+            return JSON.parse(savedUser);
+        } catch (error) {
+            console.error("Failed to parse user from localStorage", error);
+            return null;
+        }
+    }
+    return null;
+  });
+  const [users, setUsers] = useState<User[]>(USERS);
+  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
+  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
+  const [knowledgeResources, setKnowledgeResources] = useState<KnowledgeResource[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [newlyCompletedTasks, setNewlyCompletedTasks] = useState<Task[] | null>(null);
+
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('currentUser', JSON.stringify(currentUser));
+      if (currentUser.theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    } else {
+      localStorage.removeItem('currentUser');
+      document.documentElement.classList.remove('dark');
+    }
+  }, [currentUser]);
+
+  const handleLogin = (user: User) => {
+    const userFromState = users.find(u => u.id === user.id);
+    if (userFromState && userFromState.role === UserRole.Admin && userFromState.lastLogin) {
+      const lastLoginDate = new Date(userFromState.lastLogin);
+      const completedSinceLastLogin = tasks.filter(task => 
+        task.status === TaskStatus.Done && 
+        task.completedAt && 
+        new Date(task.completedAt) > lastLoginDate
+      );
+      if (completedSinceLastLogin.length > 0) {
+        setNewlyCompletedTasks(completedSinceLastLogin);
+      }
+    }
+    setCurrentUser(userFromState || user);
+  };
+
+  const handleLogout = () => {
+    if (currentUser) {
+      const now = new Date().toISOString();
+      setUsers(prevUsers => prevUsers.map(u => 
+        u.id === currentUser.id ? { ...u, lastLogin: now } : u
+      ));
+    }
+    setCurrentUser(null);
+  };
+  
+  const handlePasswordChange = (userId: string, newPassword: string) => {
+    const updateUser = (user: User) => 
+        user.id === userId
+            ? { ...user, password: newPassword, forcePasswordChange: false }
+            : user;
+
+    setUsers(prevUsers => prevUsers.map(updateUser));
+    
+    if (currentUser && currentUser.id === userId) {
+        setCurrentUser(prev => prev ? updateUser(prev) : null);
+    }
+  };
+
+  const handleChangePassword = (userId: string, oldPass: string, newPass: string): boolean => {
+    const userToUpdate = users.find(u => u.id === userId);
+    if (userToUpdate && userToUpdate.password === oldPass) {
+        handlePasswordChange(userId, newPass);
+        return true;
+    }
+    return false;
+  };
+
+
+  const handleEmailSubmit = (userId: string, email: string) => {
+    const updateUser = (user: User) => user.id === userId ? { ...user, email } : user;
+    setUsers(prevUsers => prevUsers.map(updateUser));
+
+    if (currentUser && currentUser.id === userId) {
+        setCurrentUser(prev => prev ? updateUser(prev) : null);
+    }
+    setShowConfetti(true);
+  };
+  
+  const handleAddUser = (newUserData: Omit<User, 'id'>) => {
+    const newUser: User = { ...newUserData, id: `user-${Date.now()}` };
+    setUsers(prev => [...prev, newUser]);
+  };
+  
+  const handleUpdateUser = (updatedUser: User) => {
+    setUsers(users.map(user => user.id === updatedUser.id ? updatedUser : user));
+    if (currentUser && currentUser.id === updatedUser.id) {
+        setCurrentUser(updatedUser);
+    }
+  };
+  
+  const handleUpdateUserStatus = (userId: string, status: UserStatus) => {
+    setUsers(users.map(user => (user.id === userId ? { ...user, status } : user)));
+  };
+
+  const handleAddTask = (newTaskData: Omit<Task, 'id' | 'status' | 'isArchived' | 'comments'>) => {
+    const newTask: Task = {
+      ...newTaskData,
+      id: `task-${Date.now()}`,
+      status: currentUser?.role === UserRole.Admin ? TaskStatus.ToDo : TaskStatus.PendingApproval,
+      isArchived: false,
+      comments: [],
+    };
+    setTasks(prev => [...prev, newTask]);
+  };
+
+  const handleUpdateTask = (updatedTask: Task) => {
+    setTasks(prevTasks => prevTasks.map(task => (task.id === updatedTask.id ? updatedTask : task)));
+  };
+  
+  const handleToggleChecklistItem = (taskId: string, checklistItemId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (task) {
+        const updatedChecklist = task.checklist.map(item =>
+            item.id === checklistItemId ? { ...item, isCompleted: !item.isCompleted } : item
+        );
+        const allCompleted = updatedChecklist.length > 0 && updatedChecklist.every(item => item.isCompleted);
+        if (task.status !== TaskStatus.Done && allCompleted) {
+            setShowConfetti(true);
+        }
+    }
+
+    setTasks(prevTasks => {
+      const taskIndex = prevTasks.findIndex(t => t.id === taskId);
+      if (taskIndex === -1) return prevTasks;
+
+      const newTasks = [...prevTasks];
+      const taskToUpdate = { ...newTasks[taskIndex] };
+      
+      const newChecklist = taskToUpdate.checklist.map(item =>
+        item.id === checklistItemId ? { ...item, isCompleted: !item.isCompleted } : item
+      );
+      
+      taskToUpdate.checklist = newChecklist;
+      newTasks[taskIndex] = taskToUpdate;
+
+      const allCompleted = newChecklist.length > 0 && newChecklist.every(item => item.isCompleted);
+      const anyCompleted = newChecklist.some(item => item.isCompleted);
+
+      if (allCompleted && taskToUpdate.status !== TaskStatus.Done) {
+        taskToUpdate.status = TaskStatus.Done;
+        taskToUpdate.completedAt = new Date().toISOString();
+
+        if (taskToUpdate.isRecurring && taskToUpdate.recurrenceFrequency) {
+          const nextDeadline = new Date(taskToUpdate.deadline);
+          switch (taskToUpdate.recurrenceFrequency) {
+            case RecurrenceFrequency.Daily: nextDeadline.setDate(nextDeadline.getDate() + 1); break;
+            case RecurrenceFrequency.Weekly: nextDeadline.setDate(nextDeadline.getDate() + 7); break;
+            case RecurrenceFrequency.Biweekly: nextDeadline.setDate(nextDeadline.getDate() + 14); break;
+            case RecurrenceFrequency.Monthly: nextDeadline.setMonth(nextDeadline.getMonth() + 1); break;
+          }
+
+          if (!taskToUpdate.recurrenceEndDate || nextDeadline <= new Date(taskToUpdate.recurrenceEndDate)) {
+            const recurringTask: Task = {
+              ...taskToUpdate,
+              id: `task-${Date.now()}`,
+              status: TaskStatus.ToDo,
+              deadline: nextDeadline.toISOString(),
+              checklist: taskToUpdate.checklist.map(item => ({ ...item, isCompleted: false })),
+              comments: [],
+              completedAt: null,
+            };
+            newTasks.push(recurringTask);
+          }
+        }
+      } else if (taskToUpdate.status === TaskStatus.ToDo && anyCompleted) {
+        taskToUpdate.status = TaskStatus.InProgress;
+        taskToUpdate.completedAt = null;
+      } else if (taskToUpdate.status === TaskStatus.InProgress && !anyCompleted) {
+        taskToUpdate.status = TaskStatus.ToDo;
+        taskToUpdate.completedAt = null;
+      }
+      
+      newTasks[taskIndex] = taskToUpdate;
+      return newTasks;
+    });
+  };
+
+  const handleUpdateTaskStatus = (taskId: string, newStatus: TaskStatus, updatedChecklist?: ChecklistItem[]) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (task && task.status !== TaskStatus.Done && newStatus === TaskStatus.Done) {
+        setShowConfetti(true);
+    }
+    
+    setTasks(prevTasks => {
+      const taskIndex = prevTasks.findIndex(t => t.id === taskId);
+      if (taskIndex === -1) return prevTasks;
+  
+      const taskToUpdate = { ...prevTasks[taskIndex] };
+      const oldStatus = taskToUpdate.status;
+      taskToUpdate.status = newStatus;
+
+      if (newStatus === TaskStatus.Done && oldStatus !== TaskStatus.Done) {
+        taskToUpdate.completedAt = new Date().toISOString();
+      } else if (newStatus !== TaskStatus.Done) {
+        taskToUpdate.completedAt = null;
+      }
+
+
+      if (updatedChecklist) {
+          taskToUpdate.checklist = updatedChecklist;
+      }
+  
+      if (newStatus === TaskStatus.Done && oldStatus !== TaskStatus.Done && taskToUpdate.isRecurring && taskToUpdate.recurrenceFrequency) {
+        const nextDeadline = new Date(taskToUpdate.deadline);
+        switch (taskToUpdate.recurrenceFrequency) {
+          case RecurrenceFrequency.Daily: nextDeadline.setDate(nextDeadline.getDate() + 1); break;
+          case RecurrenceFrequency.Weekly: nextDeadline.setDate(nextDeadline.getDate() + 7); break;
+          case RecurrenceFrequency.Biweekly: nextDeadline.setDate(nextDeadline.getDate() + 14); break;
+          case RecurrenceFrequency.Monthly: nextDeadline.setMonth(nextDeadline.getMonth() + 1); break;
+        }
+  
+        if (!taskToUpdate.recurrenceEndDate || nextDeadline <= new Date(taskToUpdate.recurrenceEndDate)) {
+          const recurringTask: Task = {
+            ...taskToUpdate,
+            id: `task-${Date.now()}`,
+            status: TaskStatus.ToDo,
+            deadline: nextDeadline.toISOString(),
+            checklist: taskToUpdate.checklist.map(item => ({ ...item, isCompleted: false })),
+            comments: [],
+            completedAt: null,
+          };
+          return [...prevTasks.map(t => (t.id === taskId ? taskToUpdate : t)), recurringTask];
+        }
+      }
+      return prevTasks.map(t => (t.id === taskId ? taskToUpdate : t));
+    });
+  };
+
+  const handleUpdateTaskPrivacy = (taskId: string, isPrivate: boolean) => {
+    setTasks(tasks.map(task => (task.id === taskId ? { ...task, isPrivate } : task)));
+  };
+
+  const handleUpdateTaskPriority = (taskId: string, newPriority: TaskPriority) => {
+    setTasks(tasks.map(task => (task.id === taskId ? { ...task, priority: newPriority } : task)));
+  };
+
+  const handleArchiveTask = (taskId: string, isArchived: boolean) => {
+    setTasks(tasks.map(task => (task.id === taskId ? { ...task, isArchived } : task)));
+  };
+
+  const handleDeleteTask = (taskId: string) => {
+    setTasks(tasks.filter(task => task.id !== taskId));
+  };
+  
+  const handleAddTaskComment = (taskId: string, commentData: Omit<TaskComment, 'id'>) => {
+    const newComment: TaskComment = { ...commentData, id: `comment-${Date.now()}` };
+    setTasks(tasks.map(task =>
+      task.id === taskId ? { ...task, comments: [...task.comments, newComment] } : task
+    ));
+  };
+
+  const handleSendMessage = (newMessageData: Omit<Message, 'id' | 'timestamp'>) => {
+    const newMessage: Message = { ...newMessageData, id: `msg-${Date.now()}`, timestamp: new Date().toISOString() };
+    setMessages(prev => [...prev, newMessage]);
+  };
+  
+  const handleUpdateMessageStatus = (messageId: string, userId: string, updates: Partial<Omit<MessageRecipient, 'userId'>>) => {
+    setMessages(prev => prev.map(msg => {
+      if (msg.id === messageId) {
+        if (msg.senderId === userId && 'isDeleted' in updates) {
+          return { ...msg, senderDeleted: updates.isDeleted };
+        }
+        return { ...msg, recipients: msg.recipients.map(r => r.userId === userId ? { ...r, ...updates } : r) };
+      }
+      return msg;
+    }));
+  };
+
+  const handlePermanentlyDeleteMessage = (messageId: string, userId: string) => {
+    // This is a client-side simplification. In a real app, this would be more complex.
+    // We remove the message if the current user is the one deleting it from their trash.
+    setMessages(prev => prev.filter(msg => msg.id !== messageId));
+  };
+  
+  const handleAddKnowledgeResource = (resource: Omit<KnowledgeResource, 'id'>) => {
+    const newResource: KnowledgeResource = { ...resource, id: `kr-${Date.now()}` };
+    setKnowledgeResources(prev => [...prev, newResource]);
+  };
+  
+  const handleUpdateKnowledgeResource = (resource: KnowledgeResource) => {
+    setKnowledgeResources(prev => prev.map(r => r.id === resource.id ? { ...resource, updatedAt: new Date().toISOString() } : r));
+  };
+
+  const handleDeleteKnowledgeResource = (resourceId: string) => {
+    setKnowledgeResources(prev => prev.filter(r => r.id !== resourceId));
+  };
+  
+  const handleAddFolder = (name: string) => {
+    const newFolder: Folder = { id: `folder-${Date.now()}`, name };
+    setFolders(prev => [...prev, newFolder]);
+  };
+  
+  const handleUpdateFolder = (updatedFolder: Folder) => {
+    setFolders(prev => prev.map(f => f.id === updatedFolder.id ? updatedFolder : f));
+  };
+  
+  const handleDeleteFolder = (folderId: string) => {
+    setFolders(prev => prev.filter(f => f.id !== folderId));
+    setKnowledgeResources(prev => prev.map(r => r.folderId === folderId ? { ...r, folderId: undefined } : r));
+  };
+
+  const handleWelcomeModalDismissed = () => {
+    if (currentUser) {
+      const now = new Date().toISOString();
+      const updatedUser = { ...currentUser, lastLogin: now };
+      setCurrentUser(updatedUser);
+      setUsers(prevUsers => prevUsers.map(u => u.id === currentUser.id ? { ...u, lastLogin: now } : u));
+    }
+    setNewlyCompletedTasks(null);
+  };
+
+
+  if (!currentUser) {
+    return <LoginPage onLogin={handleLogin} users={users} />;
+  }
+
+  if (currentUser.forcePasswordChange) {
+    return <ForcePasswordChangePage currentUser={currentUser} onPasswordChange={handlePasswordChange} />;
+  }
+
+  if (!currentUser.email) {
+    return (
+      <>
+        {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
+        <EmailCapturePage currentUser={currentUser} onEmailSubmit={handleEmailSubmit} />
+      </>
+    );
+  }
+
+  return (
+    <>
+      {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
+      <DashboardPage
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        users={users}
+        tasks={tasks}
+        messages={messages}
+        knowledgeResources={knowledgeResources}
+        folders={folders}
+        newlyCompletedTasks={newlyCompletedTasks}
+        onWelcomeModalDismissed={handleWelcomeModalDismissed}
+        onAddUser={handleAddUser}
+        onUpdateUser={handleUpdateUser}
+        onUpdateUserStatus={handleUpdateUserStatus}
+        onChangePassword={handleChangePassword}
+        onAddTask={handleAddTask}
+        onUpdateTask={handleUpdateTask}
+        onToggleChecklistItem={handleToggleChecklistItem}
+        onUpdateTaskStatus={handleUpdateTaskStatus}
+        onUpdateTaskPrivacy={handleUpdateTaskPrivacy}
+        onUpdateTaskPriority={handleUpdateTaskPriority}
+        onArchiveTask={handleArchiveTask}
+        onDeleteTask={handleDeleteTask}
+        onAddTaskComment={handleAddTaskComment}
+        onSendMessage={handleSendMessage}
+        onUpdateMessageStatus={handleUpdateMessageStatus}
+        onPermanentlyDeleteMessage={handlePermanentlyDeleteMessage}
+        onAddKnowledgeResource={handleAddKnowledgeResource}
+        onUpdateKnowledgeResource={handleUpdateKnowledgeResource}
+        onDeleteKnowledgeResource={handleDeleteKnowledgeResource}
+        onAddFolder={handleAddFolder}
+        onUpdateFolder={handleUpdateFolder}
+        onDeleteFolder={handleDeleteFolder}
+      />
+    </>
+  );
+};
+
+export default App;

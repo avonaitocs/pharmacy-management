@@ -1,0 +1,5 @@
+{
+  "name": "Pharmacy Management",
+  "description": "A powerful but simple to use management system specifically designed for a retail pharmacy business. It allows an admin to create and assign tasks to employees, set deadlines, and track progress.",
+  "requestFramePermissions": []
+}

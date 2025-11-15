@@ -21,6 +21,7 @@ import { generateDailyBriefing } from './/services/geminiService';
 import DocumentTextIcon from './components/icons/DocumentTextIcon';
 import KnowledgeBasePage from './components/KnowledgeBasePage';
 import Sidebar from './components/Sidebar';
+import AccountSettingsPage from './components/AccountPage';
 
 
 interface DashboardPageProps {
@@ -110,7 +111,7 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [taskToRemind, setTaskToRemind] = useState<Task | null>(null);
-  const [view, setView] = useState<'tasks' | 'users' | 'reports' | 'archives' | 'messages' | 'pending' | 'knowledgeBase'>('tasks');
+  const [view, setView] = useState<'tasks' | 'users' | 'reports' | 'archives' | 'messages' | 'pending' | 'knowledgeBase' | 'account'>('tasks');
   const [selectedUserForDetails, setSelectedUserForDetails] = useState<User | null>(null);
   
   const [isComposeModalOpen, setIsComposeModalOpen] = useState(false);
@@ -342,6 +343,13 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                           onUpdateFolder={onUpdateFolder}
                           onDeleteFolder={onDeleteFolder}
                     />
+                    case 'account':
+                      return <AccountSettingsPage
+                                  currentUser={currentUser}
+                                  onBack={() => setView('tasks')}
+                                  onUpdateUser={onUpdateUser}  // ← Add this line
+                              />;
+                  case 'tasks':          
         case 'tasks':
         default:
             return (
@@ -369,7 +377,12 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
-      <Header currentUser={currentUser} onLogout={onLogout} />
+      <Header 
+  currentUser={currentUser} 
+  onLogout={onLogout}
+  onNavigate={setView}
+  onToggleSidebar={() => {}} // Add empty function for now
+/>
       <div className="flex flex-grow overflow-hidden">
         <Sidebar
           currentUser={currentUser}
@@ -379,6 +392,7 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
           unreadMessagesCount={unreadMessagesCount}
           dailyProgress={dailyProgress}
           streakCount={streaks[currentUser.id]?.count || 0}
+          onAddTaskClick={() => setIsModalOpen(true)}
         />
         <main className="flex-grow p-4 sm:p-6 lg:p-8 overflow-y-auto">
           <div className="flex justify-between items-center mb-6">
@@ -461,6 +475,7 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
           >
             <PlusIcon className="w-8 h-8" />
           </button>
+          
         </div>
       )}
     </div>

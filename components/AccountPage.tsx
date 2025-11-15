@@ -9,8 +9,7 @@ interface AccountPageProps {
   onChangePassword: (userId: string, oldPass: string, newPass: string) => boolean;
 }
 
-const AccountPage: React.FC<AccountPageProps> = ({ currentUser, onUpdateUser, onChangePassword }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'appearance'>('profile');
+const AccountPage: React.FC<AccountPageProps> = ({ currentUser, onBack, onUpdateUser }) => {  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'appearance'>('profile');
 
   // Profile state
   const [name, setName] = useState(currentUser.name);
@@ -62,8 +61,22 @@ const AccountPage: React.FC<AccountPageProps> = ({ currentUser, onUpdateUser, on
     setTimeout(() => setPasswordMessage(null), 3000);
   };
 
-  const handleThemeChange = (theme: 'light' | 'dark') => {
-    onUpdateUser({ ...currentUser, theme });
+  const handleThemeChange = async (theme: 'light' | 'dark') => {
+    if (!onUpdateUser) return;
+    
+    try {
+      // Update user in Firestore
+      await onUpdateUser(currentUser.id, { theme });
+      
+      // Immediately update DOM for instant feedback
+      if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    } catch (error) {
+      console.error('Error updating theme:', error);
+    }
   };
 
   const TabButton: React.FC<{ tab: 'profile' | 'security' | 'appearance'; label: string }> = ({ tab, label }) => (

@@ -1,4 +1,6 @@
 // hooks/useFirestore.ts - Custom hooks for Firestore data operations
+// UPDATED: Using nested collection paths for multi-tenant architecture
+// SAFE: Handles cases where organization ID might not be available
 import { useState, useEffect } from 'react';
 import {
   collection,
@@ -16,9 +18,19 @@ import {
 import { db, getOrganizationId } from '../firebase';
 import { Task, Message, KnowledgeResource, Folder, User } from '../types';
 
+// Helper to safely get organization ID
+const safeGetOrganizationId = (): string | null => {
+  try {
+    return getOrganizationId();
+  } catch (error) {
+    console.warn('Organization ID not configured yet:', error);
+    return null;
+  }
+};
+
 // Generic hook for real-time Firestore collection
 export const useFirestoreCollection = <T extends { id: string }>(
-  collectionName: string,
+  collectionPath: string | null,
   constraints: QueryConstraint[] = []
 ) => {
   const [data, setData] = useState<T[]>([]);
@@ -26,8 +38,15 @@ export const useFirestoreCollection = <T extends { id: string }>(
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // If no collection path, return empty data
+    if (!collectionPath) {
+      setData([]);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const q = query(collection(db, collectionName), ...constraints);
+      const q = query(collection(db, collectionPath), ...constraints);
 
       const unsubscribe = onSnapshot(
         q,
@@ -41,7 +60,7 @@ export const useFirestoreCollection = <T extends { id: string }>(
           setError(null);
         },
         (err) => {
-          console.error(`Error fetching ${collectionName}:`, err);
+          console.error(`Error fetching ${collectionPath}:`, err);
           setError(err.message);
           setLoading(false);
         }
@@ -49,28 +68,30 @@ export const useFirestoreCollection = <T extends { id: string }>(
 
       return () => unsubscribe();
     } catch (err: any) {
-      console.error(`Error setting up ${collectionName} listener:`, err);
+      console.error(`Error setting up ${collectionPath} listener:`, err);
       setError(err.message);
       setLoading(false);
     }
-  }, [collectionName, JSON.stringify(constraints)]);
+  }, [collectionPath, JSON.stringify(constraints)]);
 
   return { data, loading, error };
 };
 
 // Hook for tasks collection
 export const useTasks = (userId: string | null, userRole: string | null) => {
-  const orgId = getOrganizationId();
+  const orgId = safeGetOrganizationId();
   
-  const constraints = userId
+  // Only create path if we have an orgId and userId
+  const tasksPath = orgId && userId ? `organizations/${orgId}/tasks` : null;
+  
+  const constraints = tasksPath
     ? [
-        where('organizationId', '==', orgId),
         where('isArchived', '==', false),
         orderBy('deadline', 'asc'),
       ]
     : [];
 
-  const { data: tasks, loading, error } = useFirestoreCollection<Task>('tasks', constraints);
+  const { data: tasks, loading, error } = useFirestoreCollection<Task>(tasksPath, constraints);
 
   // Filter tasks based on privacy and user permissions
   const filteredTasks = tasks.filter(task => {
@@ -81,15 +102,16 @@ export const useTasks = (userId: string | null, userRole: string | null) => {
   });
 
   const addTask = async (taskData: Omit<Task, 'id' | 'isArchived' | 'comments' | 'createdAt'>) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
       const taskToAdd = {
         ...taskData,
-        organizationId: orgId,
         isArchived: false,
         comments: [],
         createdAt: serverTimestamp(),
       };
-      await addDoc(collection(db, 'tasks'), taskToAdd);
+      await addDoc(collection(db, `organizations/${orgId}/tasks`), taskToAdd);
     } catch (err) {
       console.error('Error adding task:', err);
       throw err;
@@ -97,8 +119,10 @@ export const useTasks = (userId: string | null, userRole: string | null) => {
   };
 
   const updateTask = async (taskId: string, updates: Partial<Task>) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await updateDoc(doc(db, 'tasks', taskId), {
+      await updateDoc(doc(db, `organizations/${orgId}/tasks`, taskId), {
         ...updates,
         updatedAt: serverTimestamp(),
       });
@@ -109,8 +133,10 @@ export const useTasks = (userId: string | null, userRole: string | null) => {
   };
 
   const deleteTask = async (taskId: string) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await deleteDoc(doc(db, 'tasks', taskId));
+      await deleteDoc(doc(db, `organizations/${orgId}/tasks`, taskId));
     } catch (err) {
       console.error('Error deleting task:', err);
       throw err;
@@ -129,16 +155,15 @@ export const useTasks = (userId: string | null, userRole: string | null) => {
 
 // Hook for messages collection
 export const useMessages = (userId: string | null) => {
-  const orgId = getOrganizationId();
+  const orgId = safeGetOrganizationId();
   
-  const constraints = userId
-    ? [
-        where('organizationId', '==', orgId),
-        orderBy('timestamp', 'desc'),
-      ]
+  const messagesPath = orgId && userId ? `organizations/${orgId}/messages` : null;
+  
+  const constraints = messagesPath
+    ? [orderBy('timestamp', 'desc')]
     : [];
 
-  const { data: allMessages, loading, error } = useFirestoreCollection<Message>('messages', constraints);
+  const { data: allMessages, loading, error } = useFirestoreCollection<Message>(messagesPath, constraints);
 
   // Filter messages where user is sender or recipient
   const messages = allMessages.filter(msg => {
@@ -148,10 +173,11 @@ export const useMessages = (userId: string | null) => {
   });
 
   const sendMessage = async (messageData: Omit<Message, 'id' | 'timestamp'>) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await addDoc(collection(db, 'messages'), {
+      await addDoc(collection(db, `organizations/${orgId}/messages`), {
         ...messageData,
-        organizationId: orgId,
         timestamp: serverTimestamp(),
       });
     } catch (err) {
@@ -161,8 +187,10 @@ export const useMessages = (userId: string | null) => {
   };
 
   const updateMessage = async (messageId: string, updates: Partial<Message>) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await updateDoc(doc(db, 'messages', messageId), updates);
+      await updateDoc(doc(db, `organizations/${orgId}/messages`, messageId), updates);
     } catch (err) {
       console.error('Error updating message:', err);
       throw err;
@@ -170,8 +198,10 @@ export const useMessages = (userId: string | null) => {
   };
 
   const deleteMessage = async (messageId: string) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await deleteDoc(doc(db, 'messages', messageId));
+      await deleteDoc(doc(db, `organizations/${orgId}/messages`, messageId));
     } catch (err) {
       console.error('Error deleting message:', err);
       throw err;
@@ -190,23 +220,25 @@ export const useMessages = (userId: string | null) => {
 
 // Hook for knowledge resources collection
 export const useKnowledgeResources = () => {
-  const orgId = getOrganizationId();
+  const orgId = safeGetOrganizationId();
   
-  const constraints = [
-    where('organizationId', '==', orgId),
-    orderBy('createdAt', 'desc'),
-  ];
+  const resourcesPath = orgId ? `organizations/${orgId}/knowledgeResources` : null;
+  
+  const constraints = resourcesPath
+    ? [orderBy('createdAt', 'desc')]
+    : [];
 
   const { data: resources, loading, error } = useFirestoreCollection<KnowledgeResource>(
-    'knowledgeResources',
+    resourcesPath,
     constraints
   );
 
   const addResource = async (resourceData: Omit<KnowledgeResource, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await addDoc(collection(db, 'knowledgeResources'), {
+      await addDoc(collection(db, `organizations/${orgId}/knowledgeResources`), {
         ...resourceData,
-        organizationId: orgId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -217,8 +249,10 @@ export const useKnowledgeResources = () => {
   };
 
   const updateResource = async (resourceId: string, updates: Partial<KnowledgeResource>) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await updateDoc(doc(db, 'knowledgeResources', resourceId), {
+      await updateDoc(doc(db, `organizations/${orgId}/knowledgeResources`, resourceId), {
         ...updates,
         updatedAt: serverTimestamp(),
       });
@@ -229,8 +263,10 @@ export const useKnowledgeResources = () => {
   };
 
   const deleteResource = async (resourceId: string) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await deleteDoc(doc(db, 'knowledgeResources', resourceId));
+      await deleteDoc(doc(db, `organizations/${orgId}/knowledgeResources`, resourceId));
     } catch (err) {
       console.error('Error deleting resource:', err);
       throw err;
@@ -249,23 +285,25 @@ export const useKnowledgeResources = () => {
 
 // Hook for folders collection
 export const useFolders = () => {
-  const orgId = getOrganizationId();
+  const orgId = safeGetOrganizationId();
   
-  const constraints = [
-    where('organizationId', '==', orgId),
-    orderBy('createdAt', 'desc'),
-  ];
+  const foldersPath = orgId ? `organizations/${orgId}/folders` : null;
+  
+  const constraints = foldersPath
+    ? [orderBy('createdAt', 'desc')]
+    : [];
 
   const { data: folders, loading, error } = useFirestoreCollection<Folder>(
-    'folders',
+    foldersPath,
     constraints
   );
 
   const addFolder = async (name: string) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await addDoc(collection(db, 'folders'), {
+      await addDoc(collection(db, `organizations/${orgId}/folders`), {
         name,
-        organizationId: orgId,
         createdAt: serverTimestamp(),
       });
     } catch (err) {
@@ -275,8 +313,10 @@ export const useFolders = () => {
   };
 
   const updateFolder = async (folderId: string, updates: Partial<Folder>) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await updateDoc(doc(db, 'folders', folderId), updates);
+      await updateDoc(doc(db, `organizations/${orgId}/folders`, folderId), updates);
     } catch (err) {
       console.error('Error updating folder:', err);
       throw err;
@@ -284,8 +324,10 @@ export const useFolders = () => {
   };
 
   const deleteFolder = async (folderId: string) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await deleteDoc(doc(db, 'folders', folderId));
+      await deleteDoc(doc(db, `organizations/${orgId}/folders`, folderId));
     } catch (err) {
       console.error('Error deleting folder:', err);
       throw err;
@@ -304,18 +346,21 @@ export const useFolders = () => {
 
 // Hook for users collection (Admin only)
 export const useUsers = () => {
-  const orgId = getOrganizationId();
+  const orgId = safeGetOrganizationId();
   
-  const constraints = [
-    where('organizationId', '==', orgId),
-    orderBy('name', 'asc'),
-  ];
+  const usersPath = orgId ? `organizations/${orgId}/users` : null;
+  
+  const constraints = usersPath
+    ? [orderBy('name', 'asc')]
+    : [];
 
-  const { data: users, loading, error } = useFirestoreCollection<User>('users', constraints);
+  const { data: users, loading, error } = useFirestoreCollection<User>(usersPath, constraints);
 
   const updateUser = async (userId: string, updates: Partial<User>) => {
+    if (!orgId) throw new Error('Organization not configured');
+    
     try {
-      await updateDoc(doc(db, 'users', userId), updates);
+      await updateDoc(doc(db, `organizations/${orgId}/users`, userId), updates);
     } catch (err) {
       console.error('Error updating user:', err);
       throw err;
